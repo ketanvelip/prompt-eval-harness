@@ -1,0 +1,15 @@
+thresholds:
+  case_pass: 0.75
+  suite_pass_rate: 0.90
+  regression: 0.05
+  improvement: 0.05
+
+judge:
+  model: meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo
+  weight: 0.70
+
+assertions:
+  weight: 0.30
+
+suites_dir: suites
+results_dir: .eval-results

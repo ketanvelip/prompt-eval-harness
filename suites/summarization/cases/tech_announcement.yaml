@@ -1,0 +1,23 @@
+id: tech-announcement
+input:
+  text: >
+    Acme Corp today announced the release of WidgetOS 4.0, a major overhaul of its
+    embedded operating system for industrial IoT devices. The new version introduces
+    real-time kernel scheduling, cutting worst-case interrupt latency from 12 ms to
+    under 1 ms. WidgetOS 4.0 also adds over-the-air update support and a new hardware
+    abstraction layer that reduces porting time for new chip families by an estimated 60%.
+    The update is available immediately at no cost for existing licensees.
+assertions:
+  - type: not_empty
+  - type: max_length
+    value: 500
+  - type: min_length
+    value: 60
+  - type: contains
+    value: "WidgetOS"
+  - type: not_contains
+    value: "•"
+rubric: >
+  The summary should mention WidgetOS 4.0, at least one key improvement
+  (latency, OTA updates, or porting time), and note availability for existing licensees.
+  Plain prose, no lists.

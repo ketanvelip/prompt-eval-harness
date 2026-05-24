@@ -1,0 +1,24 @@
+id: climate-article
+input:
+  text: >
+    Scientists have warned that global average temperatures have risen by approximately
+    1.1 degrees Celsius since pre-industrial times, driven primarily by the burning of
+    fossil fuels. The Intergovernmental Panel on Climate Change (IPCC) says that limiting
+    warming to 1.5°C is still possible but requires immediate, large-scale reductions in
+    greenhouse gas emissions. Without significant action, extreme weather events such as
+    floods, droughts, and heat waves are expected to become more frequent and severe,
+    threatening food security and displacing hundreds of millions of people by 2050.
+assertions:
+  - type: not_empty
+  - type: max_length
+    value: 600
+  - type: min_length
+    value: 80
+  - type: contains
+    value: "temperature"
+  - type: not_contains
+    value: "•"
+rubric: >
+  The summary should accurately capture the core finding (temperatures rising ~1.1°C),
+  mention the cause (fossil fuels) or the body (IPCC), and note the consequence
+  (extreme weather / displacement). It should be concise, plain prose, no bullet points.
