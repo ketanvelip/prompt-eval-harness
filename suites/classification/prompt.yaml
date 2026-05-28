@@ -1,4 +1,5 @@
 name: classification-v1
+provider: together
 model: meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo
 system: >
   You are a text classifier. Respond with exactly one word from the provided

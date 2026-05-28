@@ -6,6 +6,7 @@ thresholds:
 
 judge:
   model: meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo
+  provider: together
   weight: 0.70
 
 assertions:
@@ -13,3 +14,19 @@ assertions:
 
 suites_dir: suites
 results_dir: .eval-results
+
+# Provider definitions — add your own or override base_url / api_key_env.
+# Model format for --model flag: "provider:model-id"  (e.g. openai:gpt-4o-mini)
+providers:
+  together:
+    base_url: https://api.together.xyz/v1
+    api_key_env: TOGETHER_API_KEY
+  openai:
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+  groq:
+    base_url: https://api.groq.com/openai/v1
+    api_key_env: GROQ_API_KEY
+  ollama:
+    base_url: http://localhost:11434/v1
+    api_key_env: ""

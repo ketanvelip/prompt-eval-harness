@@ -13,7 +13,7 @@ from rich.text import Text
 import yaml
 
 from .config import load_config
-from .runner import run_suite
+from .runner import parse_model_arg, run_suite
 from .storage import list_runs, load_run, save_run
 
 console = Console()
@@ -101,11 +101,17 @@ def cli():
 @cli.command()
 @click.argument("suite")
 @click.option("--prompt", "prompt_file", default=None, help="Path to a specific prompt.yaml")
+@click.option("--model", default=None, help="Override model: 'model-id' or 'provider:model-id'")
 @click.option("--no-judge", "skip_judge", is_flag=True, default=False, help="Skip LLM judge; use assertions only")
 @click.option("--config", "config_path", default="eval.config.yaml", show_default=True)
-def run(suite: str, prompt_file: str | None, skip_judge: bool, config_path: str):
+def run(suite: str, prompt_file: str | None, model: str | None, skip_judge: bool, config_path: str):
     """Run all test cases in SUITE against the suite's prompt."""
     cfg = load_config(Path(config_path))
+
+    provider_override = None
+    model_override = None
+    if model:
+        provider_override, model_override = parse_model_arg(model)
 
     def progress(i: int, total: int, case_id: str):
         console.print(f"  [{i+1}/{total}] Running [cyan]{case_id}[/cyan] …", end="\r")
@@ -114,6 +120,8 @@ def run(suite: str, prompt_file: str | None, skip_judge: bool, config_path: str)
         record = run_suite(
             suite, cfg,
             prompt_file=prompt_file,
+            model_override=model_override,
+            provider_override=provider_override,
             use_judge=not skip_judge,
             progress_callback=progress,
         )
@@ -121,7 +129,7 @@ def run(suite: str, prompt_file: str | None, skip_judge: bool, config_path: str)
         console.print(f"\n[red]Error:[/red] {exc}")
         raise SystemExit(1)
 
-    console.print()  # clear progress line
+    console.print()
     out_path = save_run(record, cfg.results_dir)
     console.print(f"  Saved → [dim]{out_path}[/dim]\n")
     _print_run(record, cfg)
@@ -249,6 +257,97 @@ def history(suite: str, config_path: str):
             f"{rec.pass_rate*100:.0f}%",
             Text("PASS" if rec.suite_passed else "FAIL", style=suite_color),
         )
+
+    console.print(tbl)
+
+
+def _short_model(model_id: str, max_len: int = 22) -> str:
+    name = model_id.split("/")[-1] if "/" in model_id else model_id
+    return name if len(name) <= max_len else name[:max_len - 1] + "…"
+
+
+@cli.command("compare-models")
+@click.argument("suite")
+@click.option("--model", "models", multiple=True, required=True,
+              help="Model to compare: 'model-id' or 'provider:model-id'. Repeat for each model.")
+@click.option("--prompt", "prompt_file", default=None, help="Path to a specific prompt.yaml")
+@click.option("--no-judge", "skip_judge", is_flag=True, default=False)
+@click.option("--config", "config_path", default="eval.config.yaml", show_default=True)
+def compare_models(
+    suite: str,
+    models: tuple[str, ...],
+    prompt_file: str | None,
+    skip_judge: bool,
+    config_path: str,
+):
+    """Run SUITE against multiple models and show a side-by-side comparison."""
+    cfg = load_config(Path(config_path))
+    records = []
+
+    for idx, model_arg in enumerate(models):
+        provider_override, model_override = parse_model_arg(model_arg)
+        label = f"[{idx+1}/{len(models)}] {provider_override}:{model_override}"
+        console.print(f"\n  Running {label} …")
+
+        def progress(i: int, total: int, case_id: str, _label=label):
+            console.print(f"    [{i+1}/{total}] [cyan]{case_id}[/cyan] …", end="\r")
+
+        try:
+            record = run_suite(
+                suite, cfg,
+                prompt_file=prompt_file,
+                model_override=model_override,
+                provider_override=provider_override,
+                use_judge=not skip_judge,
+                progress_callback=progress,
+            )
+        except Exception as exc:
+            console.print(f"\n  [red]Error running {model_arg}:[/red] {exc}")
+            raise SystemExit(1)
+
+        console.print()
+        save_run(record, cfg.results_dir)
+        records.append(record)
+
+    # Build comparison table
+    console.print()
+    console.rule(f"[bold]Model Comparison — {suite}[/bold]")
+
+    headers = [_short_model(r.model) for r in records]
+
+    tbl = Table(box=box.SIMPLE_HEAD)
+    tbl.add_column("Case", style="bold")
+    for h in headers:
+        tbl.add_column(h, justify="center")
+
+    all_case_ids = [c.case_id for c in records[0].cases]
+    case_maps = [{c.case_id: c for c in r.cases} for r in records]
+
+    for cid in all_case_ids:
+        row = [cid]
+        for cm in case_maps:
+            c = cm.get(cid)
+            if c is None:
+                row.append("—")
+            else:
+                color = _score_color(c.final_score)
+                icon = _passed_icon(c.passed)
+                row.append(Text(f"{c.final_score:.2f} {icon}", style=color))
+        tbl.add_row(*row)
+
+    # Summary rows
+    tbl.add_section()
+    avg_row = ["Avg Score"]
+    pass_row = ["Pass Rate"]
+    suite_row = ["Suite"]
+    for r in records:
+        avg_row.append(Text(f"{r.avg_score:.3f}", style=_score_color(r.avg_score)))
+        suite_color = "green" if r.suite_passed else "red"
+        pass_row.append(f"{r.pass_rate*100:.0f}%")
+        suite_row.append(Text("PASS" if r.suite_passed else "FAIL", style=suite_color))
+    tbl.add_row(*avg_row)
+    tbl.add_row(*pass_row)
+    tbl.add_row(*suite_row)
 
     console.print(tbl)
 

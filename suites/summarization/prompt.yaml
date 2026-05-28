@@ -1,4 +1,5 @@
 name: summarization-v1
+provider: together
 model: meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo
 system: "You are a helpful assistant that summarizes text clearly and concisely."
 user: |

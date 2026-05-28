@@ -34,6 +34,7 @@ class TestCase(BaseModel):
 class PromptTemplate(BaseModel):
     """A versioned prompt template."""
     name: str
+    provider: str = "together"
     model: str
     system: str = ""
     user: str  # may contain {{variable}} placeholders
@@ -69,6 +70,7 @@ class RunRecord(BaseModel):
     run_id: str
     suite: str
     prompt_name: str
+    provider: str
     model: str
     timestamp: datetime
     cases: list[CaseResult]
