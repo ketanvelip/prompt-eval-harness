@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import click
@@ -12,9 +13,12 @@ from rich.text import Text
 
 import yaml
 
-from .config import load_config
+from .config import load_config, load_suite_config
 from .runner import parse_model_arg, run_suite
-from .storage import list_runs, load_run, save_run
+from .storage import (
+    baseline_path, list_runs, load_baseline, load_run,
+    save_baseline, save_run,
+)
 
 console = Console()
 
@@ -103,8 +107,10 @@ def cli():
 @click.option("--prompt", "prompt_file", default=None, help="Path to a specific prompt.yaml")
 @click.option("--model", default=None, help="Override model: 'model-id' or 'provider:model-id'")
 @click.option("--no-judge", "skip_judge", is_flag=True, default=False, help="Skip LLM judge; use assertions only")
+@click.option("--check-regression", is_flag=True, default=False, help="Compare against baseline; exit 1 on regression")
 @click.option("--config", "config_path", default="eval.config.yaml", show_default=True)
-def run(suite: str, prompt_file: str | None, model: str | None, skip_judge: bool, config_path: str):
+def run(suite: str, prompt_file: str | None, model: str | None, skip_judge: bool,
+        check_regression: bool, config_path: str):
     """Run all test cases in SUITE against the suite's prompt."""
     cfg = load_config(Path(config_path))
 
@@ -134,7 +140,21 @@ def run(suite: str, prompt_file: str | None, model: str | None, skip_judge: bool
     console.print(f"  Saved → [dim]{out_path}[/dim]\n")
     _print_run(record, cfg)
 
-    raise SystemExit(0 if record.suite_passed else 1)
+    verdict = None
+    is_regression = False
+    if check_regression:
+        baseline = load_baseline(suite)
+        if baseline is None:
+            console.print("[yellow]No baseline found — skipping regression check. Run `eval-harness baseline set {}` to create one.[/yellow]".format(suite))
+        else:
+            _, suite_thresholds = load_suite_config(Path(cfg.suites_dir) / suite, cfg)
+            is_regression, verdict = _regression_verdict(record, baseline, suite_thresholds)
+            color = "red" if is_regression else ("green" if "IMPROVEMENT" in verdict else "yellow")
+            console.print("  vs baseline: [{}]{}[/{}]\n".format(color, verdict, color))
+
+    _append_step_summary(_record_to_markdown(record, verdict))
+
+    raise SystemExit(1 if (not record.suite_passed or is_regression) else 0)
 
 
 @cli.command()
@@ -261,6 +281,49 @@ def history(suite: str, config_path: str):
     console.print(tbl)
 
 
+def _regression_verdict(current, baseline, thresholds) -> tuple[bool, str]:
+    """Return (is_regression, human-readable verdict string)."""
+    delta = current.avg_score - baseline.avg_score
+    if delta < -thresholds.regression:
+        return True, "REGRESSION ({:+.3f})".format(delta)
+    if delta > thresholds.improvement:
+        return False, "IMPROVEMENT ({:+.3f})".format(delta)
+    return False, "NEUTRAL ({:+.3f})".format(delta)
+
+
+def _append_step_summary(lines: list[str]) -> None:
+    """Write Markdown lines to $GITHUB_STEP_SUMMARY if running in GitHub Actions."""
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary_path:
+        return
+    with open(summary_path, "a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n\n")
+
+
+def _record_to_markdown(record, verdict: str | None = None) -> list[str]:
+    suite_icon = "✅" if record.suite_passed else "❌"
+    lines = [
+        "### {} Suite: `{}` — {}".format(suite_icon, record.suite, "PASSED" if record.suite_passed else "FAILED"),
+        "",
+        "| | |",
+        "|---|---|",
+        "| Model | `{}:{}` |".format(record.provider, record.model),
+        "| Avg Score | {:.3f} |".format(record.avg_score),
+        "| Pass Rate | {:.0f}% |".format(record.pass_rate * 100),
+    ]
+    if verdict:
+        lines.append("| vs Baseline | {} |".format(verdict))
+    lines += [
+        "",
+        "| Case | Score | Pass |",
+        "|---|---|---|",
+    ]
+    for c in record.cases:
+        icon = "✅" if c.passed else "❌"
+        lines.append("| {} | {:.2f} | {} |".format(c.case_id, c.final_score, icon))
+    return lines
+
+
 def _short_model(model_id: str, max_len: int = 22) -> str:
     name = model_id.split("/")[-1] if "/" in model_id else model_id
     return name if len(name) <= max_len else name[:max_len - 1] + "…"
@@ -350,6 +413,142 @@ def compare_models(
     tbl.add_row(*suite_row)
 
     console.print(tbl)
+
+
+@cli.group()
+def baseline():
+    """Manage baselines for regression detection."""
+    pass
+
+
+@baseline.command("set")
+@click.argument("suite")
+@click.argument("run_id", required=False, default=None)
+@click.option("--config", "config_path", default="eval.config.yaml", show_default=True)
+def baseline_set(suite: str, run_id: str | None, config_path: str):
+    """Promote a run to the baseline for SUITE (defaults to the latest run)."""
+    cfg = load_config(Path(config_path))
+    if run_id:
+        candidates = list(Path(cfg.results_dir).rglob(f"{run_id}.json"))
+        if not candidates:
+            console.print(f"[red]Run ID '{run_id}' not found.[/red]")
+            raise SystemExit(1)
+        record = load_run(candidates[0])
+    else:
+        paths = list_runs(suite, cfg.results_dir)
+        if not paths:
+            console.print(f"[red]No runs found for suite '{suite}'. Run `eval-harness run {suite}` first.[/red]")
+            raise SystemExit(1)
+        record = load_run(paths[-1])
+
+    out = save_baseline(record)
+    console.print(f"  Baseline set → [dim]{out}[/dim]")
+    console.print(f"  Run: {record.run_id}  Avg: {record.avg_score:.3f}  Pass: {record.pass_rate*100:.0f}%")
+    console.print(f"  [dim]Commit {out} to make this the shared team baseline.[/dim]")
+
+
+@baseline.command("show")
+@click.argument("suite")
+def baseline_show(suite: str):
+    """Show the current baseline scores for SUITE."""
+    record = load_baseline(suite)
+    if record is None:
+        console.print(f"[yellow]No baseline for '{suite}'. Run `eval-harness baseline set {suite}`.[/yellow]")
+        raise SystemExit(0)
+    console.print(f"  Baseline for [cyan]{suite}[/cyan]  (run {record.run_id})")
+    console.print(f"  Model: {record.provider}:{record.model}")
+    console.print(f"  Avg: {record.avg_score:.3f}  Pass rate: {record.pass_rate*100:.0f}%\n")
+    tbl = Table(box=box.SIMPLE_HEAD)
+    tbl.add_column("Case")
+    tbl.add_column("Score", justify="right")
+    tbl.add_column("Pass?", justify="center")
+    for c in record.cases:
+        color = _score_color(c.final_score)
+        tbl.add_row(
+            c.case_id,
+            Text(f"{c.final_score:.2f}", style=color),
+            Text(_passed_icon(c.passed), style="green" if c.passed else "red"),
+        )
+    console.print(tbl)
+
+
+def _discover_suites(cfg) -> list[str]:
+    """Return names of all valid suite directories (have prompt.yaml + cases/)."""
+    suites_dir = Path(cfg.suites_dir)
+    if not suites_dir.exists():
+        return []
+    return sorted(
+        d.name for d in suites_dir.iterdir()
+        if d.is_dir() and (d / "prompt.yaml").exists() and (d / "cases").is_dir()
+    )
+
+
+@cli.command("run-ci")
+@click.option("--no-judge", "skip_judge", is_flag=True, default=False, help="Skip LLM judge")
+@click.option("--config", "config_path", default="eval.config.yaml", show_default=True)
+def run_ci(skip_judge: bool, config_path: str):
+    """Run all suites with regression checking — designed for CI pipelines.
+
+    Exits 0 only if every suite passes and no regressions are detected.
+    Automatically writes a Markdown summary to $GITHUB_STEP_SUMMARY when set.
+    """
+    cfg = load_config(Path(config_path))
+    suites = _discover_suites(cfg)
+
+    if not suites:
+        console.print("[yellow]No suites found under '{}'.[/yellow]".format(cfg.suites_dir))
+        raise SystemExit(0)
+
+    console.print(f"  Found {len(suites)} suite(s): {', '.join(suites)}\n")
+
+    overall_ok = True
+    summary_lines: list[str] = ["# Prompt Eval Results", ""]
+
+    for suite in suites:
+        console.rule(f"[bold]{suite}[/bold]")
+
+        def progress(i: int, total: int, case_id: str):
+            console.print(f"  [{i+1}/{total}] [cyan]{case_id}[/cyan] …", end="\r")
+
+        try:
+            record = run_suite(suite, cfg, use_judge=not skip_judge, progress_callback=progress)
+        except Exception as exc:
+            console.print(f"\n  [red]Error:[/red] {exc}")
+            overall_ok = False
+            summary_lines += [f"### ❌ Suite: `{suite}` — ERROR", "", f"> {exc}", ""]
+            continue
+
+        console.print()
+        save_run(record, cfg.results_dir)
+        _print_run(record, cfg)
+
+        # Regression check
+        verdict = None
+        baseline = load_baseline(suite)
+        if baseline is not None:
+            _, suite_thresholds = load_suite_config(Path(cfg.suites_dir) / suite, cfg)
+            is_regression, verdict = _regression_verdict(record, baseline, suite_thresholds)
+            color = "red" if is_regression else ("green" if "IMPROVEMENT" in verdict else "yellow")
+            console.print("  vs baseline: [{}]{}[/{}]\n".format(color, verdict, color))
+            if is_regression:
+                overall_ok = False
+        else:
+            console.print("  [dim]No baseline — skipping regression check.[/dim]\n")
+
+        if not record.suite_passed:
+            overall_ok = False
+
+        summary_lines += _record_to_markdown(record, verdict)
+        summary_lines.append("")
+
+    _append_step_summary(summary_lines)
+
+    if overall_ok:
+        console.print("[green]All suites passed.[/green]")
+    else:
+        console.print("[red]One or more suites failed or regressed.[/red]")
+
+    raise SystemExit(0 if overall_ok else 1)
 
 
 _ASSERTION_TYPES = [

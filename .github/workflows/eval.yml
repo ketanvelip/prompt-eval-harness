@@ -1,0 +1,45 @@
+name: Prompt Evals
+
+on:
+  pull_request:
+    paths:
+      - "suites/**"
+      - "eval_harness/**"
+      - "eval.config.yaml"
+      - "baselines/**"
+  push:
+    branches: [master, main]
+    paths:
+      - "suites/**"
+      - "eval_harness/**"
+      - "eval.config.yaml"
+  workflow_dispatch:
+
+jobs:
+  eval:
+    name: Run eval suites
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Run all suites
+        run: eval-harness run-ci --no-judge
+        env:
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ github.run_id }}
+          path: .eval-results/
+          retention-days: 30
