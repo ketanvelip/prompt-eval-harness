@@ -1,15 +1,11 @@
-"""Assertion-based scoring (Phase 1) and LLM-judge scoring (Phase 2)."""
+"""Assertion-based scoring and LLM-judge scoring."""
 
 from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING
 
 from .models import Assertion, AssertionResult
-
-if TYPE_CHECKING:
-    pass
 
 
 # ---------------------------------------------------------------------------
@@ -119,10 +115,34 @@ def score_assertions(output: str, assertions: list[Assertion]) -> tuple[list[Ass
 
 
 # ---------------------------------------------------------------------------
-# LLM-as-Judge  (Phase 2 — stub for now)
+# LLM-as-Judge
 # ---------------------------------------------------------------------------
 
-async def score_with_judge(
+_JUDGE_SYSTEM = (
+    "You are a strict output quality evaluator. "
+    "You will be given a rubric describing what a good response looks like, "
+    "the input provided to the model, and the model's output. "
+    'Respond with a JSON object with exactly two keys: "score" (float 0.0–1.0, '
+    "where 1.0 fully meets the rubric and 0.0 completely fails) and "
+    '"reason" (one concise sentence explaining your rating). '
+    "Output only the JSON object — no markdown, no extra text."
+)
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```")
+
+
+def _parse_judge_response(text: str) -> tuple[float, str]:
+    """Extract (score, reason) from judge response, stripping markdown fences if present."""
+    m = _JSON_FENCE_RE.search(text)
+    raw = m.group(1) if m else text.strip()
+    data = json.loads(raw)
+    score = float(data["score"])
+    score = max(0.0, min(1.0, score))
+    reason = str(data.get("reason", ""))
+    return score, reason
+
+
+def score_with_judge(
     output: str,
     rubric: str,
     input_vars: dict,
@@ -133,9 +153,30 @@ async def score_with_judge(
     """
     Ask an LLM to rate output quality against the rubric.
 
-    Returns (score 0-1, reason string).
-    Stub returns (1.0, "judge not yet enabled") until Phase 2 is wired in.
+    Returns (score 0.0–1.0, reason string).
+    Falls back to (0.5, error message) if the judge response cannot be parsed.
     """
-    # Phase 2 implementation will go here.
-    # For now, return a neutral score so Phase 1 tests can run.
-    return 1.0, "judge not yet enabled (Phase 2)"
+    input_summary = "; ".join(
+        "{}: {}".format(k, str(v)[:200]) for k, v in input_vars.items()
+    )
+    user_content = (
+        "RUBRIC:\n{}\n\nINPUT:\n{}\n\nMODEL OUTPUT:\n{}".format(
+            rubric, input_summary, output
+        )
+    )
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _JUDGE_SYSTEM},
+            {"role": "user", "content": user_content},
+        ],
+        max_tokens=128,
+        temperature=0.0,
+    )
+
+    raw_text = response.choices[0].message.content or ""
+    try:
+        return _parse_judge_response(raw_text)
+    except Exception as exc:
+        return 0.5, "judge parse error: {}".format(exc)

@@ -51,18 +51,28 @@ def _print_run(record, config):
     tbl.add_column("Latency", justify="right")
     tbl.add_column("Failures")
 
+    has_judge = any(c.judge_score is not None for c in record.cases)
+    if has_judge:
+        tbl.add_column("Judge", justify="right")
+        tbl.add_column("Judge reason")
+
     for case in record.cases:
         color = _score_color(case.final_score)
         failures = "; ".join(
             r.message for r in case.assertion_results if not r.passed and r.message
         )
-        tbl.add_row(
+        row = [
             case.case_id,
             Text(f"{case.final_score:.2f}", style=color),
             Text(_passed_icon(case.passed), style="green" if case.passed else "red"),
             f"{case.latency_ms:.0f} ms",
             failures or "—",
-        )
+        ]
+        if has_judge:
+            j = case.judge_score
+            row.append(Text(f"{j:.2f}" if j is not None else "—", style=_score_color(j) if j is not None else "dim"))
+            row.append(case.judge_reason or "—")
+        tbl.add_row(*row)
 
     console.print(tbl)
 
@@ -89,20 +99,22 @@ def cli():
 @cli.command()
 @click.argument("suite")
 @click.option("--prompt", "prompt_file", default=None, help="Path to a specific prompt.yaml")
+@click.option("--no-judge", "skip_judge", is_flag=True, default=False, help="Skip LLM judge; use assertions only")
 @click.option("--config", "config_path", default="eval.config.yaml", show_default=True)
-def run(suite: str, prompt_file: str | None, config_path: str):
+def run(suite: str, prompt_file: str | None, skip_judge: bool, config_path: str):
     """Run all test cases in SUITE against the suite's prompt."""
     cfg = load_config(Path(config_path))
 
-    total_cases = None
-
     def progress(i: int, total: int, case_id: str):
-        nonlocal total_cases
-        total_cases = total
         console.print(f"  [{i+1}/{total}] Running [cyan]{case_id}[/cyan] …", end="\r")
 
     try:
-        record = run_suite(suite, cfg, prompt_file=prompt_file, progress_callback=progress)
+        record = run_suite(
+            suite, cfg,
+            prompt_file=prompt_file,
+            use_judge=not skip_judge,
+            progress_callback=progress,
+        )
     except Exception as exc:
         console.print(f"\n[red]Error:[/red] {exc}")
         raise SystemExit(1)

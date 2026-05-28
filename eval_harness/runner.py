@@ -13,7 +13,7 @@ from openai import OpenAI
 
 from .config import EvalConfig, get_together_api_key
 from .models import CaseResult, PromptTemplate, RunRecord, TestCase
-from .scorer import score_assertions
+from .scorer import score_assertions, score_with_judge
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +65,7 @@ def run_suite(
     config: EvalConfig,
     *,
     prompt_file: str | None = None,
+    use_judge: bool = True,
     progress_callback=None,
 ) -> RunRecord:
     """
@@ -126,11 +127,29 @@ def run_suite(
 
         output = response.choices[0].message.content or ""
 
-        # Score
+        # Assertion scoring
         assertion_results, assertion_score = score_assertions(output, case.assertions)
 
-        # Phase 1: final score = assertion score only
-        final_score = assertion_score
+        # LLM judge scoring (skipped if no rubric or --no-judge)
+        judge_score = None
+        judge_reason = None
+        if use_judge and case.rubric:
+            judge_score, judge_reason = score_with_judge(
+                output,
+                case.rubric,
+                case.input,
+                client=client,
+                model=config.judge.model,
+            )
+
+        # Weighted final score
+        if judge_score is not None:
+            jw = config.judge.weight
+            aw = config.assertions.weight
+            final_score = jw * judge_score + aw * assertion_score
+        else:
+            final_score = assertion_score
+
         passed = final_score >= config.thresholds.case_pass
 
         case_results.append(CaseResult(
@@ -140,6 +159,8 @@ def run_suite(
             latency_ms=round(latency_ms, 1),
             assertion_results=assertion_results,
             assertion_score=round(assertion_score, 4),
+            judge_score=round(judge_score, 4) if judge_score is not None else None,
+            judge_reason=judge_reason,
             final_score=round(final_score, 4),
             passed=passed,
         ))

@@ -58,8 +58,9 @@ class CaseResult(BaseModel):
     latency_ms: float
     assertion_results: list[AssertionResult]
     assertion_score: float        # fraction of assertions that passed (0–1)
-    judge_score: Optional[float] = None   # Phase 2
-    final_score: float            # weighted combination (Phase 1: = assertion_score)
+    judge_score: Optional[float] = None
+    judge_reason: Optional[str] = None
+    final_score: float            # weighted combination
     passed: bool                  # final_score >= threshold
 
 
