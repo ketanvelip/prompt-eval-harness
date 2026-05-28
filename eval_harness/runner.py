@@ -11,7 +11,7 @@ from pathlib import Path
 import yaml
 from openai import OpenAI
 
-from .config import EvalConfig, get_together_api_key
+from .config import EvalConfig, get_together_api_key, load_suite_config
 from .models import CaseResult, PromptTemplate, RunRecord, TestCase
 from .scorer import score_assertions, score_with_judge
 
@@ -93,6 +93,8 @@ def run_suite(
     if not prompt_path.exists():
         raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
 
+    _, thresholds = load_suite_config(suite_dir, config)
+
     prompt = _load_prompt(prompt_path)
     cases = _load_cases(suite_dir / "cases")
 
@@ -150,7 +152,7 @@ def run_suite(
         else:
             final_score = assertion_score
 
-        passed = final_score >= config.thresholds.case_pass
+        passed = final_score >= thresholds.case_pass
 
         case_results.append(CaseResult(
             case_id=case.id,
@@ -168,7 +170,7 @@ def run_suite(
     # Aggregate
     avg_score = sum(r.final_score for r in case_results) / len(case_results)
     pass_rate = sum(r.passed for r in case_results) / len(case_results)
-    suite_passed = pass_rate >= config.thresholds.suite_pass_rate
+    suite_passed = pass_rate >= thresholds.suite_pass_rate
 
     return RunRecord(
         run_id=_make_run_id(),

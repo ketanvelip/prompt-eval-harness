@@ -1,0 +1,5 @@
+name: Summarization Suite
+description: Tests for text summarization quality — prose output, no bullet points
+thresholds:
+  case_pass: 0.80
+  suite_pass_rate: 0.90

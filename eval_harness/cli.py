@@ -10,6 +10,8 @@ from rich.table import Table
 from rich import box
 from rich.text import Text
 
+import yaml
+
 from .config import load_config
 from .runner import run_suite
 from .storage import list_runs, load_run, save_run
@@ -249,6 +251,93 @@ def history(suite: str, config_path: str):
         )
 
     console.print(tbl)
+
+
+_ASSERTION_TYPES = [
+    "not_empty", "max_length", "min_length", "contains", "not_contains",
+    "starts_with", "ends_with", "is_json", "regex",
+]
+_VALUED_ASSERTIONS = {"max_length", "min_length", "contains", "not_contains", "starts_with", "ends_with", "regex"}
+
+
+@cli.command("add-case")
+@click.argument("suite")
+@click.option("--config", "config_path", default="eval.config.yaml", show_default=True)
+def add_case(suite: str, config_path: str):
+    """Interactively add a new test case to SUITE."""
+    cfg = load_config(Path(config_path))
+    suite_dir = Path(cfg.suites_dir) / suite
+    cases_dir = suite_dir / "cases"
+
+    if not suite_dir.exists():
+        console.print(f"[red]Suite '{suite}' not found at {suite_dir}[/red]")
+        raise SystemExit(1)
+    cases_dir.mkdir(exist_ok=True)
+
+    console.rule(f"[bold]Add case → {suite}[/bold]")
+
+    # Case ID
+    case_id = click.prompt("Case ID (e.g. my-test-case)").strip()
+    if not case_id:
+        console.print("[red]Case ID cannot be empty.[/red]")
+        raise SystemExit(1)
+    out_path = cases_dir / f"{case_id}.yaml"
+    if out_path.exists() and not click.confirm(f"'{case_id}' already exists. Overwrite?"):
+        raise SystemExit(0)
+
+    # Input variables
+    inputs: dict = {}
+    console.print("\nInput variables [dim](blank name to finish)[/dim]")
+    while True:
+        key = click.prompt("  Name", default="", show_default=False).strip()
+        if not key:
+            break
+        val = click.prompt(f"  {key}")
+        inputs[key] = val
+    if not inputs:
+        console.print("[yellow]No inputs added — prompt {{variables}} won't be substituted.[/yellow]")
+
+    # Assertions
+    assertions: list = []
+    console.print(
+        "\nAssertions [dim](types: {})[/dim]".format(", ".join(_ASSERTION_TYPES))
+    )
+    console.print("[dim]Blank type to finish.[/dim]")
+    while True:
+        a_type = click.prompt("  Type", default="", show_default=False).strip()
+        if not a_type:
+            break
+        if a_type not in _ASSERTION_TYPES:
+            console.print(f"  [yellow]Unknown type '{a_type}' — skipped.[/yellow]")
+            continue
+        if a_type in _VALUED_ASSERTIONS:
+            val = click.prompt("    Value").strip()
+            if a_type in {"max_length", "min_length"}:
+                try:
+                    val = int(val)
+                except ValueError:
+                    pass
+            assertions.append({"type": a_type, "value": val})
+        else:
+            assertions.append({"type": a_type})
+
+    # Rubric
+    console.print("\nRubric [dim](what a good output looks like — used by LLM judge; blank to skip)[/dim]")
+    rubric = click.prompt("  Rubric", default="", show_default=False).strip()
+
+    # Write YAML
+    data: dict = {"id": case_id, "input": inputs}
+    if assertions:
+        data["assertions"] = assertions
+    if rubric:
+        data["rubric"] = rubric
+
+    out_path.write_text(
+        yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    console.print(f"\n  Written → [dim]{out_path}[/dim]")
+    console.print(f"  Run it:   [cyan]eval-harness run {suite}[/cyan]\n")
 
 
 if __name__ == "__main__":

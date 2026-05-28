@@ -1,0 +1,5 @@
+name: Classification Suite
+description: Tests for single-label text classification
+thresholds:
+  case_pass: 0.80
+  suite_pass_rate: 0.90

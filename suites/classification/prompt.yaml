@@ -1,0 +1,13 @@
+name: classification-v1
+model: meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo
+system: >
+  You are a text classifier. Respond with exactly one word from the provided
+  categories — no explanation, no punctuation, just the label.
+user: |
+  Categories: {{categories}}
+
+  Text: {{text}}
+
+  Category:
+max_tokens: 16
+temperature: 0.0

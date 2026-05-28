@@ -1,0 +1,13 @@
+id: tech-headline
+input:
+  text: "Apple unveils new MacBook Pro with M4 chip, promising 40% faster performance"
+  categories: "technology, politics, sports, entertainment, science"
+assertions:
+  - type: not_empty
+  - type: max_length
+    value: 30
+  - type: contains
+    value: technology
+rubric: >
+  The output should be "technology". The headline is clearly about a new laptop
+  product release — there is no ambiguity with other categories.

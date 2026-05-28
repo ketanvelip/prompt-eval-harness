@@ -1,0 +1,13 @@
+id: positive-review
+input:
+  text: "The product arrived in perfect condition and works exactly as described. Absolutely love it!"
+  categories: "positive, negative, neutral"
+assertions:
+  - type: not_empty
+  - type: max_length
+    value: 30
+  - type: contains
+    value: positive
+rubric: >
+  The output should be exactly "positive". The review is unambiguously enthusiastic
+  with no negative or neutral language.

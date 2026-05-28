@@ -37,7 +37,27 @@ class EvalConfig(BaseModel):
     results_dir: str = ".eval-results"
 
 
+class SuiteConfig(BaseModel):
+    name: str = ""
+    description: str = ""
+
+
 _cached: Optional[EvalConfig] = None
+
+
+def load_suite_config(suite_dir: Path, global_config: EvalConfig) -> tuple[SuiteConfig, ThresholdConfig]:
+    """Load suite.yaml if present and return merged thresholds."""
+    path = suite_dir / "suite.yaml"
+    if not path.exists():
+        return SuiteConfig(), global_config.thresholds
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    suite_cfg = SuiteConfig(name=raw.get("name", ""), description=raw.get("description", ""))
+    overrides = raw.get("thresholds", {})
+    if overrides:
+        merged = global_config.thresholds.model_dump()
+        merged.update(overrides)
+        return suite_cfg, ThresholdConfig(**merged)
+    return suite_cfg, global_config.thresholds
 
 
 def load_config(path: Path = _DEFAULT_CONFIG_PATH) -> EvalConfig:
