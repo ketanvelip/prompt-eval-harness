@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import yaml
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+
+load_dotenv()  # load .env from project root if present
 
 
 _DEFAULT_CONFIG_PATH = Path("eval.config.yaml")
