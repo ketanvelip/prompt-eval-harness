@@ -14,6 +14,7 @@ from rich.text import Text
 import yaml
 
 from .config import load_config, load_suite_config
+from .report import write_report
 from .runner import parse_model_arg, run_suite
 from .storage import (
     baseline_path, list_runs, load_baseline, load_run,
@@ -108,9 +109,10 @@ def cli():
 @click.option("--model", default=None, help="Override model: 'model-id' or 'provider:model-id'")
 @click.option("--no-judge", "skip_judge", is_flag=True, default=False, help="Skip LLM judge; use assertions only")
 @click.option("--check-regression", is_flag=True, default=False, help="Compare against baseline; exit 1 on regression")
+@click.option("--report", "report_file", default=None, help="Write HTML report to this path (e.g. report.html)")
 @click.option("--config", "config_path", default="eval.config.yaml", show_default=True)
 def run(suite: str, prompt_file: str | None, model: str | None, skip_judge: bool,
-        check_regression: bool, config_path: str):
+        check_regression: bool, report_file: str | None, config_path: str):
     """Run all test cases in SUITE against the suite's prompt."""
     cfg = load_config(Path(config_path))
 
@@ -153,6 +155,10 @@ def run(suite: str, prompt_file: str | None, model: str | None, skip_judge: bool
             console.print("  vs baseline: [{}]{}[/{}]\n".format(color, verdict, color))
 
     _append_step_summary(_record_to_markdown(record, verdict))
+
+    if report_file:
+        write_report([record], Path(report_file), title="Eval — {}".format(suite))
+        console.print("  Report → [dim]{}[/dim]".format(report_file))
 
     raise SystemExit(1 if (not record.suite_passed or is_regression) else 0)
 
@@ -485,8 +491,9 @@ def _discover_suites(cfg) -> list[str]:
 
 @cli.command("run-ci")
 @click.option("--no-judge", "skip_judge", is_flag=True, default=False, help="Skip LLM judge")
+@click.option("--report", "report_file", default=None, help="Write combined HTML report to this path")
 @click.option("--config", "config_path", default="eval.config.yaml", show_default=True)
-def run_ci(skip_judge: bool, config_path: str):
+def run_ci(skip_judge: bool, report_file: str | None, config_path: str):
     """Run all suites with regression checking — designed for CI pipelines.
 
     Exits 0 only if every suite passes and no regressions are detected.
@@ -502,6 +509,7 @@ def run_ci(skip_judge: bool, config_path: str):
     console.print(f"  Found {len(suites)} suite(s): {', '.join(suites)}\n")
 
     overall_ok = True
+    records: list = []
     summary_lines: list[str] = ["# Prompt Eval Results", ""]
 
     for suite in suites:
@@ -520,6 +528,7 @@ def run_ci(skip_judge: bool, config_path: str):
 
         console.print()
         save_run(record, cfg.results_dir)
+        records.append(record)
         _print_run(record, cfg)
 
         # Regression check
@@ -542,6 +551,10 @@ def run_ci(skip_judge: bool, config_path: str):
         summary_lines.append("")
 
     _append_step_summary(summary_lines)
+
+    if report_file and records:
+        write_report(records, Path(report_file), title="Eval Report")
+        console.print("  Report → [dim]{}[/dim]".format(report_file))
 
     if overall_ok:
         console.print("[green]All suites passed.[/green]")
